@@ -3,6 +3,8 @@ CONFIG += console c++11
 CONFIG -= app_bundle
 CONFIG -= qt
 
+TARGET = myffmplay_cpy
+
 #CONFIG += c++11
 
 QMAKE_CXXFLAGS += -Werror=return-type
@@ -17,7 +19,7 @@ unix:LIBS += -Wl,--start-group \
     -lavfilter \
     -Wl,--end-group
 
-unix:LIBS += -lvdpau -lva -lX11 -lva-drm -lva-x11 -lSDL
+unix:LIBS += -lvdpau -lva -lX11 -lva-drm -lva-x11 -lSDL2
 
 unix:LIBS += -ldl -pthread -lm
 

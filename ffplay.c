@@ -53,8 +53,8 @@
 # include "libavfilter/buffersrc.h"
 #endif
 
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_thread.h>
+#include <SDL.h>
+#include <SDL_thread.h>
 
 #include "cmdutils.h"
 
@@ -3670,8 +3670,6 @@ int main(int argc, char **argv)
     show_banner(argc, argv, options);
 
     parse_options(NULL, argc, argv, options, opt_input_file);
-
-    input_filename = "rtsp://192.168.0.1/livestream/12";
 
     if (!input_filename) {
         show_usage();

@@ -34,10 +34,11 @@
 #include "libavformat/avformat.h"
 #include "libavfilter/avfilter.h"
 #include "libavdevice/avdevice.h"
-#include "libavresample/avresample.h"
+//#include "libavresample/avresample.h"
 #include "libswscale/swscale.h"
 #include "libswresample/swresample.h"
-#include "libpostproc/postprocess.h"
+//#include "libpostproc/postprocess.h"
+#include "libavutil/attributes.h"
 #include "libavutil/avassert.h"
 #include "libavutil/avstring.h"
 #include "libavutil/bprint.h"
@@ -52,6 +53,7 @@
 #include "libavutil/opt.h"
 #include "libavutil/cpu.h"
 #include "libavutil/ffversion.h"
+#include "libavutil/version.h"
 #include "cmdutils.h"
 #if CONFIG_NETWORK
 //#include "libavformat/network.h"
@@ -59,6 +61,9 @@
 #if HAVE_SYS_RESOURCE_H
 #include <sys/time.h>
 #include <sys/resource.h>
+#endif
+#ifdef _WIN32
+#include <windows.h>
 #endif
 
 static int init_report(const char *env);
@@ -70,6 +75,12 @@ AVDictionary *format_opts, *codec_opts, *resample_opts;
 static FILE *report_file;
 static int report_file_level = AV_LOG_DEBUG;
 int hide_banner = 0;
+
+enum show_muxdemuxers {
+    SHOW_DEFAULT,
+    SHOW_DEMUXERS,
+    SHOW_MUXERS,
+};
 
 void init_opts(void)
 {
@@ -104,6 +115,15 @@ static void log_callback_report(void *ptr, int level, const char *fmt, va_list v
         fputs(line, report_file);
         fflush(report_file);
     }
+}
+
+void init_dynload(void)
+{
+#ifdef _WIN32
+    /* Calling SetDllDirectory with the empty string (but not NULL) removes the
+     * current working directory from the DLL search path as a security pre-caution. */
+    SetDllDirectory("");
+#endif
 }
 
 static void (*program_exit)(int ret);
@@ -212,7 +232,6 @@ static const OptionDef *find_option(const OptionDef *po, const char *name)
  * by default. HAVE_COMMANDLINETOARGVW is true on cygwin, while
  * it doesn't provide the actual command line via GetCommandLineW(). */
 #if HAVE_COMMANDLINETOARGVW && defined(_WIN32)
-#include <windows.h>
 #include <shellapi.h>
 /* Will be leaked on exit */
 static char** win32_argv_utf8 = NULL;
@@ -533,7 +552,12 @@ int opt_default(void *optctx, const char *opt, const char *arg)
 #if CONFIG_AVRESAMPLE
     const AVClass *rc = avresample_get_class();
 #endif
-    const AVClass *sc, *swr_class;
+#if CONFIG_SWSCALE
+    const AVClass *sc = sws_get_class();
+#endif
+#if CONFIG_SWRESAMPLE
+    const AVClass *swr_class = swr_get_class();
+#endif
 
     if (!strcmp(opt, "debug") || !strcmp(opt, "fdebug"))
         av_log_set_level(AV_LOG_DEBUG);
@@ -557,12 +581,17 @@ int opt_default(void *optctx, const char *opt, const char *arg)
         consumed = 1;
     }
 #if CONFIG_SWSCALE
-    sc = sws_get_class();
     if (!consumed && (o = opt_find(&sc, opt, NULL, 0,
                          AV_OPT_SEARCH_CHILDREN | AV_OPT_SEARCH_FAKE_OBJ))) {
         struct SwsContext *sws = sws_alloc_context();
         int ret = av_opt_set(sws, opt, arg, 0);
         sws_freeContext(sws);
+        if (!strcmp(opt, "srcw") || !strcmp(opt, "srch") ||
+            !strcmp(opt, "dstw") || !strcmp(opt, "dsth") ||
+            !strcmp(opt, "src_format") || !strcmp(opt, "dst_format")) {
+            av_log(NULL, AV_LOG_ERROR, "Directly using swscale dimensions/format options is not supported, please use the -s or -pix_fmt options\n");
+            return AVERROR(EINVAL);
+        }
         if (ret < 0) {
             av_log(NULL, AV_LOG_ERROR, "Error setting option %s.\n", opt);
             return ret;
@@ -579,7 +608,6 @@ int opt_default(void *optctx, const char *opt, const char *arg)
     }
 #endif
 #if CONFIG_SWRESAMPLE
-    swr_class = swr_get_class();
     if (!consumed && (o=opt_find(&swr_class, opt, NULL, 0,
                                     AV_OPT_SEARCH_CHILDREN | AV_OPT_SEARCH_FAKE_OBJ))) {
         struct SwrContext *swr = swr_alloc();
@@ -1038,18 +1066,40 @@ static int warned_cfg = 0;
 #define SHOW_CONFIG   4
 #define SHOW_COPYRIGHT 8
 
+//#define PRINT_LIB_INFO(libname, LIBNAME, flags, level)                  \
+//    if (CONFIG_##LIBNAME) {                                             \
+//        const char *indent = flags & INDENT? "  " : "";                 \
+//        if (flags & SHOW_VERSION) {                                     \
+//            unsigned int version = libname##_version();                 \
+//            av_log(NULL, level,                                         \
+//                   "%slib%-11s %2d.%3d.%3d / %2d.%3d.%3d\n",            \
+//                   indent, #libname,                                    \
+//                   LIB##LIBNAME##_VERSION_MAJOR,                        \
+//                   LIB##LIBNAME##_VERSION_MINOR,                        \
+//                   LIB##LIBNAME##_VERSION_MICRO,                        \
+//                   AV_VERSION_MAJOR(version), AV_VERSION_MINOR(version),\
+//                   AV_VERSION_MICRO(version));                          \
+//        }                                                               \
+//        if (flags & SHOW_CONFIG) {                                      \
+//            const char *cfg = libname##_configuration();                \
+//            if (strcmp(FFMPEG_CONFIGURATION, cfg)) {                    \
+//                if (!warned_cfg) {                                      \
+//                    av_log(NULL, level,                                 \
+//                            "%sWARNING: library configuration mismatch\n", \
+//                            indent);                                    \
+//                    warned_cfg = 1;                                     \
+//                }                                                       \
+//                av_log(NULL, level, "%s%-11s configuration: %s\n",      \
+//                        indent, #libname, cfg);                         \
+//            }                                                           \
+//        }                                                               \
+//    }                                                                   \
+
 #define PRINT_LIB_INFO(libname, LIBNAME, flags, level)                  \
     if (CONFIG_##LIBNAME) {                                             \
         const char *indent = flags & INDENT? "  " : "";                 \
         if (flags & SHOW_VERSION) {                                     \
             unsigned int version = libname##_version();                 \
-            av_log(NULL, level,                                         \
-                   "%slib%-11s %2d.%3d.%3d / %2d.%3d.%3d\n",            \
-                   indent, #libname,                                    \
-                   LIB##LIBNAME##_VERSION_MAJOR,                        \
-                   LIB##LIBNAME##_VERSION_MINOR,                        \
-                   LIB##LIBNAME##_VERSION_MICRO,                        \
-                   version >> 16, version >> 8 & 0xff, version & 0xff); \
         }                                                               \
         if (flags & SHOW_CONFIG) {                                      \
             const char *cfg = libname##_configuration();                \
@@ -1068,15 +1118,15 @@ static int warned_cfg = 0;
 
 static void print_all_libs_info(int flags, int level)
 {
-    PRINT_LIB_INFO(avutil,   AVUTIL,   flags, level);
-    PRINT_LIB_INFO(avcodec,  AVCODEC,  flags, level);
-    PRINT_LIB_INFO(avformat, AVFORMAT, flags, level);
-    PRINT_LIB_INFO(avdevice, AVDEVICE, flags, level);
-    PRINT_LIB_INFO(avfilter, AVFILTER, flags, level);
+    PRINT_LIB_INFO(avutil,     AVUTIL,     flags, level);
+    PRINT_LIB_INFO(avcodec,    AVCODEC,    flags, level);
+    PRINT_LIB_INFO(avformat,   AVFORMAT,   flags, level);
+    PRINT_LIB_INFO(avdevice,   AVDEVICE,   flags, level);
+    PRINT_LIB_INFO(avfilter,   AVFILTER,   flags, level);
     PRINT_LIB_INFO(avresample, AVRESAMPLE, flags, level);
-    PRINT_LIB_INFO(swscale,  SWSCALE,  flags, level);
-    PRINT_LIB_INFO(swresample,SWRESAMPLE,  flags, level);
-    PRINT_LIB_INFO(postproc, POSTPROC, flags, level);
+    PRINT_LIB_INFO(swscale,    SWSCALE,    flags, level);
+    PRINT_LIB_INFO(swresample, SWRESAMPLE, flags, level);
+    PRINT_LIB_INFO(postproc,   POSTPROC,   flags, level);
 }
 
 static void print_program_info(int flags, int level)
@@ -1228,7 +1278,7 @@ static int is_device(const AVClass *avclass)
     return AV_IS_INPUT_DEVICE(avclass->category) || AV_IS_OUTPUT_DEVICE(avclass->category);
 }
 
-static int show_formats_devices(void *optctx, const char *opt, const char *arg, int device_only)
+static int show_formats_devices(void *optctx, const char *opt, const char *arg, int device_only, int muxdemuxers)
 {
     AVInputFormat *ifmt  = NULL;
     AVOutputFormat *ofmt = NULL;
@@ -1246,29 +1296,33 @@ static int show_formats_devices(void *optctx, const char *opt, const char *arg, 
         const char *name      = NULL;
         const char *long_name = NULL;
 
-        while ((ofmt = av_oformat_next(ofmt))) {
-            is_dev = is_device(ofmt->priv_class);
-            if (!is_dev && device_only)
-                continue;
-            if ((!name || strcmp(ofmt->name, name) < 0) &&
-                strcmp(ofmt->name, last_name) > 0) {
-                name      = ofmt->name;
-                long_name = ofmt->long_name;
-                encode    = 1;
+        if (muxdemuxers !=SHOW_DEMUXERS) {
+            while ((ofmt = av_oformat_next(ofmt))) {
+                is_dev = is_device(ofmt->priv_class);
+                if (!is_dev && device_only)
+                    continue;
+                if ((!name || strcmp(ofmt->name, name) < 0) &&
+                    strcmp(ofmt->name, last_name) > 0) {
+                    name      = ofmt->name;
+                    long_name = ofmt->long_name;
+                    encode    = 1;
+                }
             }
         }
-        while ((ifmt = av_iformat_next(ifmt))) {
-            is_dev = is_device(ifmt->priv_class);
-            if (!is_dev && device_only)
-                continue;
-            if ((!name || strcmp(ifmt->name, name) < 0) &&
-                strcmp(ifmt->name, last_name) > 0) {
-                name      = ifmt->name;
-                long_name = ifmt->long_name;
-                encode    = 0;
+        if (muxdemuxers != SHOW_MUXERS) {
+            while ((ifmt = av_iformat_next(ifmt))) {
+                is_dev = is_device(ifmt->priv_class);
+                if (!is_dev && device_only)
+                    continue;
+                if ((!name || strcmp(ifmt->name, name) < 0) &&
+                    strcmp(ifmt->name, last_name) > 0) {
+                    name      = ifmt->name;
+                    long_name = ifmt->long_name;
+                    encode    = 0;
+                }
+                if (name && strcmp(ifmt->name, name) == 0)
+                    decode = 1;
             }
-            if (name && strcmp(ifmt->name, name) == 0)
-                decode = 1;
         }
         if (!name)
             break;
@@ -1285,12 +1339,22 @@ static int show_formats_devices(void *optctx, const char *opt, const char *arg, 
 
 int show_formats(void *optctx, const char *opt, const char *arg)
 {
-    return show_formats_devices(optctx, opt, arg, 0);
+    return show_formats_devices(optctx, opt, arg, 0, SHOW_DEFAULT);
+}
+
+int show_muxers(void *optctx, const char *opt, const char *arg)
+{
+    return show_formats_devices(optctx, opt, arg, 0, SHOW_MUXERS);
+}
+
+int show_demuxers(void *optctx, const char *opt, const char *arg)
+{
+    return show_formats_devices(optctx, opt, arg, 0, SHOW_DEMUXERS);
 }
 
 int show_devices(void *optctx, const char *opt, const char *arg)
 {
-    return show_formats_devices(optctx, opt, arg, 1);
+    return show_formats_devices(optctx, opt, arg, 1, SHOW_DEFAULT);
 }
 
 #define PRINT_CODEC_SUPPORTED(codec, field, type, list_name, term, get_name) \
@@ -1313,16 +1377,47 @@ static void print_codec(const AVCodec *c)
     printf("%s %s [%s]:\n", encoder ? "Encoder" : "Decoder", c->name,
            c->long_name ? c->long_name : "");
 
+    printf("    General capabilities: ");
+    if (c->capabilities & AV_CODEC_CAP_DRAW_HORIZ_BAND)
+        printf("horizband ");
+    if (c->capabilities & AV_CODEC_CAP_DR1)
+        printf("dr1 ");
+    if (c->capabilities & AV_CODEC_CAP_TRUNCATED)
+        printf("trunc ");
+    if (c->capabilities & AV_CODEC_CAP_DELAY)
+        printf("delay ");
+    if (c->capabilities & AV_CODEC_CAP_SMALL_LAST_FRAME)
+        printf("small ");
+    if (c->capabilities & AV_CODEC_CAP_SUBFRAMES)
+        printf("subframes ");
+    if (c->capabilities & AV_CODEC_CAP_EXPERIMENTAL)
+        printf("exp ");
+    if (c->capabilities & AV_CODEC_CAP_CHANNEL_CONF)
+        printf("chconf ");
+    if (c->capabilities & AV_CODEC_CAP_PARAM_CHANGE)
+        printf("paramchange ");
+    if (c->capabilities & AV_CODEC_CAP_VARIABLE_FRAME_SIZE)
+        printf("variable ");
+    if (c->capabilities & (AV_CODEC_CAP_FRAME_THREADS |
+                           AV_CODEC_CAP_SLICE_THREADS |
+                           AV_CODEC_CAP_AUTO_THREADS))
+        printf("threads ");
+    if (!c->capabilities)
+        printf("none");
+    printf("\n");
+
     if (c->type == AVMEDIA_TYPE_VIDEO ||
         c->type == AVMEDIA_TYPE_AUDIO) {
         printf("    Threading capabilities: ");
         switch (c->capabilities & (AV_CODEC_CAP_FRAME_THREADS |
-                                   AV_CODEC_CAP_SLICE_THREADS)) {
+                                   AV_CODEC_CAP_SLICE_THREADS |
+                                   AV_CODEC_CAP_AUTO_THREADS)) {
         case AV_CODEC_CAP_FRAME_THREADS |
              AV_CODEC_CAP_SLICE_THREADS: printf("frame and slice"); break;
         case AV_CODEC_CAP_FRAME_THREADS: printf("frame");           break;
         case AV_CODEC_CAP_SLICE_THREADS: printf("slice");           break;
-        default:                      printf("no");              break;
+        case AV_CODEC_CAP_AUTO_THREADS : printf("auto");            break;
+        default:                         printf("none");            break;
         }
         printf("\n");
     }
@@ -1381,7 +1476,7 @@ static int compare_codec_desc(const void *a, const void *b)
     const AVCodecDescriptor * const *da = a;
     const AVCodecDescriptor * const *db = b;
 
-    return (*da)->type != (*db)->type ? (*da)->type - (*db)->type :
+    return (*da)->type != (*db)->type ? FFDIFFSIGN((*da)->type, (*db)->type) :
            strcmp((*da)->name, (*db)->name);
 }
 
@@ -1525,10 +1620,11 @@ int show_encoders(void *optctx, const char *opt, const char *arg)
 
 int show_bsfs(void *optctx, const char *opt, const char *arg)
 {
-    AVBitStreamFilter *bsf = NULL;
+    const AVBitStreamFilter *bsf = NULL;
+    void *opaque = NULL;
 
     printf("Bitstream filters:\n");
-    while ((bsf = av_bitstream_filter_next(bsf)))
+    while ((bsf = av_bsf_iterate(&opaque)))
         printf("%s\n", bsf->name);
     printf("\n");
     return 0;
@@ -1583,7 +1679,7 @@ int show_filters(void *optctx, const char *opt, const char *arg)
                                   ( i && (filter->flags & AVFILTER_FLAG_DYNAMIC_OUTPUTS))) ? 'N' : '|';
         }
         *descr_cur = 0;
-        printf(" %c%c%c %-16s %-10s %s\n",
+        printf(" %c%c%c %-17s %-10s %s\n",
                filter->flags & AVFILTER_FLAG_SUPPORT_TIMELINE ? 'T' : '.',
                filter->flags & AVFILTER_FLAG_SLICE_THREADS    ? 'S' : '.',
                filter->process_command                        ? 'C' : '.',
@@ -1628,7 +1724,7 @@ int show_pix_fmts(void *optctx, const char *opt, const char *arg)
 #endif
 
     while ((pix_desc = av_pix_fmt_desc_next(pix_desc))) {
-        enum AVPixelFormat pix_fmt = av_pix_fmt_desc_get_id(pix_desc);
+        enum AVPixelFormat av_unused pix_fmt = av_pix_fmt_desc_get_id(pix_desc);
         printf("%c%c%c%c%c %-16s       %d            %2d\n",
                sws_isSupportedInput (pix_fmt)              ? 'I' : '.',
                sws_isSupportedOutput(pix_fmt)              ? 'O' : '.',
@@ -1939,7 +2035,7 @@ AVDictionary *filter_codec_opts(AVDictionary *opts, enum AVCodecID codec_id,
         codec            = s->oformat ? avcodec_find_encoder(codec_id)
                                       : avcodec_find_decoder(codec_id);
 
-    switch (st->codec->codec_type) {
+    switch (st->codecpar->codec_type) {
     case AVMEDIA_TYPE_VIDEO:
         prefix  = 'v';
         flags  |= AV_OPT_FLAG_VIDEO_PARAM;
@@ -1997,7 +2093,7 @@ AVDictionary **setup_find_stream_info_opts(AVFormatContext *s,
         return NULL;
     }
     for (i = 0; i < s->nb_streams; i++)
-        opts[i] = filter_codec_opts(codec_opts, s->streams[i]->codec->codec_id,
+        opts[i] = filter_codec_opts(codec_opts, s->streams[i]->codecpar->codec_id,
                                     s, s->streams[i], NULL);
     return opts;
 }
@@ -2023,18 +2119,10 @@ void *grow_array(void *array, int elem_size, int *size, int new_size)
 
 double get_rotation(AVStream *st)
 {
-    AVDictionaryEntry *rotate_tag = av_dict_get(st->metadata, "rotate", NULL, 0);
     uint8_t* displaymatrix = av_stream_get_side_data(st,
                                                      AV_PKT_DATA_DISPLAYMATRIX, NULL);
     double theta = 0;
-
-    if (rotate_tag && *rotate_tag->value && strcmp(rotate_tag->value, "0")) {
-        char *tail;
-        theta = av_strtod(rotate_tag->value, &tail);
-        if (*tail)
-            theta = 0;
-    }
-    if (displaymatrix && !theta)
+    if (displaymatrix)
         theta = -av_display_rotation_get((int32_t*) displaymatrix);
 
     theta -= 360*floor(theta/360 + 0.9/360);
@@ -2057,7 +2145,7 @@ static int print_device_sources(AVInputFormat *fmt, AVDictionary *opts)
     if (!fmt || !fmt->priv_class  || !AV_IS_INPUT_DEVICE(fmt->priv_class->category))
         return AVERROR(EINVAL);
 
-    printf("Audo-detected sources for %s:\n", fmt->name);
+    printf("Auto-detected sources for %s:\n", fmt->name);
     if (!fmt->get_device_list) {
         ret = AVERROR(ENOSYS);
         printf("Cannot list sources. Not implemented.\n");
@@ -2087,7 +2175,7 @@ static int print_device_sinks(AVOutputFormat *fmt, AVDictionary *opts)
     if (!fmt || !fmt->priv_class  || !AV_IS_OUTPUT_DEVICE(fmt->priv_class->category))
         return AVERROR(EINVAL);
 
-    printf("Audo-detected sinks for %s:\n", fmt->name);
+    printf("Auto-detected sinks for %s:\n", fmt->name);
     if (!fmt->get_device_list) {
         ret = AVERROR(ENOSYS);
         printf("Cannot list sinks. Not implemented.\n");

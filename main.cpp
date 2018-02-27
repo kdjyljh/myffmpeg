@@ -10,8 +10,6 @@ int main(int argc, char *argv[])
     FLAGS_log_dir = "/tmp/";
     FLAGS_logtostderr = 1;
 
-    QCoreApplication::setAttribute(Qt::AA_X11InitThreads);
-
     QApplication a(argc, argv);
 
     ImageShow::getInstace()->show();

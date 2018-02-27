@@ -82,6 +82,11 @@ enum show_muxdemuxers {
     SHOW_MUXERS,
 };
 
+void show_help_default(const char *opt, const char *arg)
+{
+
+}
+
 void init_opts(void)
 {
     av_dict_set(&sws_dict, "flags", "bicubic", 0);

@@ -23,7 +23,6 @@ private:
 
 private:
     QLabel *viewLable;
-    static std::deque<QImage> imageQueue;
     explicit ImageShow(QWidget *parent = nullptr);
 };
 

@@ -21,7 +21,7 @@ unix:LIBS += -Wl,--start-group \
     -lavfilter \
     -Wl,--end-group
 
-unix:LIBS += -lvdpau -lva -lX11 -lva-drm -lva-x11 -lSDL2
+unix:LIBS += -lvdpau -lva -lX11 -lva-drm -lva-x11
 
 unix:LIBS += -ldl -pthread -lm
 
@@ -33,9 +33,14 @@ SOURCES += \
 #    main.c \
     cmdutils.c \
     main.cpp \
-    imageshow.cpp
+    imageshow.cpp \
+    imagestreamproc.cpp \
+    streaminfodef.cpp
 
 HEADERS += \
     cmdutils.h \
-    imageshow.h
-    cmdutils_common_opts.h
+    imageshow.h \
+    imagestreamproc.h \
+    streaminfodef.h \
+    cmdutils_common_opts.h \
+    config.h

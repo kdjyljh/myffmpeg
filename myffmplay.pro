@@ -1,13 +1,15 @@
 TEMPLATE = app
-CONFIG += console c++11
-CONFIG -= app_bundle
-CONFIG -= qt
 
-TARGET = myffmplay_cpy
+QT       += core concurrent gui
 
-#CONFIG += c++11
+greaterThan(QT_MAJOR_VERSION, 4): {
+    QT += widgets
+    CONFIG += c++11
+}
 
-QMAKE_CXXFLAGS += -Werror=return-type
+TARGET = myffmplay
+
+QMAKE_CXXFLAGS += -Werror=return-type -Wenum-compare
 
 unix:LIBS += -Wl,--start-group \
     -lswresample \
@@ -28,9 +30,12 @@ unix:LIBS += -lboost_system -lboost_thread -lboost_filesystem -lboost_regex -lbo
 unix:LIBS += -lglog
 
 SOURCES += \
-    main.c \
-    cmdutils.c
+#    main.c \
+    cmdutils.c \
+    main.cpp \
+    imageshow.cpp
 
 HEADERS += \
     cmdutils.h \
+    imageshow.h
     cmdutils_common_opts.h

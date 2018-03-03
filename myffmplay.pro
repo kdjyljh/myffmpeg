@@ -21,7 +21,7 @@ unix:LIBS += -Wl,--start-group \
     -lavfilter \
     -Wl,--end-group
 
-unix:LIBS += -lvdpau -lva -lX11 -lva-drm -lva-x11
+unix:LIBS += -lvdpau -lva -lX11 -lva-drm -lva-x11 -lSDL2
 
 unix:LIBS += -ldl -pthread -lm
 

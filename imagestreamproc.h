@@ -10,6 +10,7 @@
 #include <assert.h>
 #include <string>
 #include <boost/thread.hpp>
+#include <deque>
 
 using std::isnan;
 
@@ -17,10 +18,13 @@ class ImageStreamProc
 {
 public:
     explicit ImageStreamProc();
-    bool streamOpen();
-    void streamClose();
+    void run();
+    static void popImage(AVFrame &image);
 
 private:
+    bool streamOpen();
+    void streamClose();
+    void eventLoop();
     int frame_queue_init(FrameQueue *f, PacketQueue *pktq, int max_size, int keep_last);
     int packet_queue_init(PacketQueue *q);
     int read_thread();
@@ -74,17 +78,37 @@ private:
     void frame_queue_push(FrameQueue *f);
     int subtitle_thread(void *arg);
     int queue_picture(VideoState *is, AVFrame *src_frame, double pts, double duration, int64_t pos, int serial);
+    void video_refresh(void *opaque, double *remaining_time);
+    void check_external_clock_speed(VideoState *is);
+    void set_clock_speed(Clock *c, double speed);
+    void video_display(VideoState *is);
+    int video_open(VideoState *is);
+    void video_audio_display(VideoState *s);
+    int compute_mod(int a, int b);
+    void video_image_display(VideoState *is);
+    Frame *frame_queue_peek_last(FrameQueue *f);
+    Frame *frame_queue_peek(FrameQueue *f);
+    int upload_image(AVFrame *frame, struct SwsContext **img_convert_ctx);
+    void frame_queue_next(FrameQueue *f);
+    double vp_duration(VideoState *is, Frame *vp, Frame *nextvp);
+    double compute_target_delay(double delay, VideoState *is);
+    void update_video_pts(VideoState *is, double pts, int64_t pos, int serial);
+    void sync_clock_to_slave(Clock *c, Clock *slave);
+    Frame *frame_queue_peek_next(FrameQueue *f);
+
+private:
+    static void pushImage(AVFrame image);
 
 private:
     /* options specified by the user */
     AVInputFormat *file_iformat;
     const char *input_filename;
-    const char *window_title;
+    const char *window_title = nullptr;
     int default_width  = 640;
     int default_height = 480;
     int screen_width  = 0;
     int screen_height = 0;
-    int audio_disable = 0;
+    int audio_disable = 1;//由于audio_open函数没有实现，暂时不使用音频
     int video_disable = 0;
     int subtitle_disable;
     const char* wanted_stream_spec[AVMEDIA_TYPE_NB] = {0};
@@ -107,16 +131,16 @@ private:
     int framedrop = -1;
     int infinite_buffer = -1;
     enum ShowMode show_mode = SHOW_MODE_NONE;
-    const char *audio_codec_name;
-    const char *subtitle_codec_name;
-    const char *video_codec_name;
+    const char *audio_codec_name = nullptr;
+    const char *subtitle_codec_name = nullptr;
+    const char *video_codec_name = nullptr;
     double rdftspeed = 0.02;
     int64_t cursor_last_shown;
-    int cursor_hidden = 0;
+//    int cursor_hidden = 0;
     #if CONFIG_AVFILTER
     const char **vfilters_list = NULL;
     int nb_vfilters = 0;
-    char *afilters = NULL;
+    char *afilters = nullptr;
     #endif
     int autorotate = 1;
     int find_stream_info = 1;
@@ -130,7 +154,10 @@ private:
 private:
     VideoState *is;
     boost::thread readThread;
-    boost::thread decoderThread;
+    boost::thread videoDecoderThread;
+    boost::thread audioDecoderThread;
+    boost::thread subtitleDecoderThread;
+    static std::deque<AVFrame> imageQueue;
 };
 
 #endif // IMAGESTREAMPROC_H

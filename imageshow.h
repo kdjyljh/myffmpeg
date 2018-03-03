@@ -6,6 +6,8 @@
 #include <boost/shared_ptr.hpp>
 #include <deque>
 
+#include "imagestreamproc.h"
+
 class ImageShow : public QWidget
 {
     Q_OBJECT
@@ -20,10 +22,11 @@ public slots:
 
 private:
     void setLabelPix(const QImage image);
+    explicit ImageShow(QWidget *parent = nullptr);
 
 private:
     QLabel *viewLable;
-    explicit ImageShow(QWidget *parent = nullptr);
+    boost::shared_ptr<ImageStreamProc> imgSP;
 };
 
 #endif // IMAGESHOW_H
